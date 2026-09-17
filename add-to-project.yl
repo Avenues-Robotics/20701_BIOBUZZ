@@ -1,0 +1,62 @@
+# Copy this file to .github/workflows/add-to-project.yml in EACH student
+# repo you want feeding the org board. Only two lines need to change
+# per repo - PROJECT_NUMBER (same for every repo, once you have it) and
+# TEAM_NAME (different per repo).
+#
+# What it does: whenever a new issue is opened in this repo, it's added to
+# the org-level project and its "Team" field is set to TEAM_NAME - no
+# per-repo GitHub UI clicking required, and no limit on how many repos
+# can do this (unlike the built-in "Auto-add to project" workflow, which
+# is capped at 1 repo on GitHub Free / 5 on Pro-Team / 20 on Enterprise).
+#
+# One-time setup required before this will work - see SETUP.md.
+
+name: Add issue to org project
+
+on:
+  issues:
+    types: [opened]
+
+env:
+  ORG: Avenues-Robotics
+  PROJECT_NUMBER: "9"   # from the project's URL: .../orgs/Avenues-Robotics/projects/<this number>
+  TEAM_NAME: "Lovelace"          # must exactly match one of the options on the project's "Team" field
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue to project
+        id: add
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          set -euo pipefail
+          ITEM_ID=$(gh project item-add "$PROJECT_NUMBER" --owner "$ORG" \
+            --url "${{ github.event.issue.html_url }}" --format json --jq '.id')
+          echo "item_id=$ITEM_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Set the Team field
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          set -euo pipefail
+          PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$ORG" --format json --jq '.id')
+          FIELD_JSON=$(gh project field-list "$PROJECT_NUMBER" --owner "$ORG" --format json \
+            --jq '.fields[] | select(.name=="Team")')
+
+          if [ -z "$FIELD_JSON" ]; then
+            echo "::error::No field named 'Team' found on project $PROJECT_NUMBER. Add a single-select field called 'Team' first - see SETUP.md."
+            exit 1
+          fi
+
+          FIELD_ID=$(echo "$FIELD_JSON" | jq -r '.id')
+          OPTION_ID=$(echo "$FIELD_JSON" | jq -r --arg team "$TEAM_NAME" '.options[] | select(.name==$team) | .id')
+
+          if [ -z "$OPTION_ID" ]; then
+            echo "::error::No option named '$TEAM_NAME' on the 'Team' field. Check spelling/case against the project's field options, or add it there."
+            exit 1
+          fi
+
+          gh project item-edit --id "${{ steps.add.outputs.item_id }}" \
+            --project-id "$PROJECT_ID" --field-id "$FIELD_ID" --single-select-option-id "$OPTION_ID"
